@@ -1973,7 +1973,7 @@
                 "mimeTypes": [
                     "application/vnd.jupyter.widget-view+json"
                 ],
-                "requiresMessaging": "optional"
+                "requiresMessaging": "always"
             },
             {
                 "id": "jupyter-error-renderer",
