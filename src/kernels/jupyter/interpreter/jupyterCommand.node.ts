@@ -1,20 +1,16 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-'use strict';
 import { SpawnOptions } from 'child_process';
 import { inject, injectable } from 'inversify';
 import * as path from '../../../platform/vscode-path/path';
-import { traceError } from '../../../platform/logging';
-import {
-    IPythonExecutionService,
-    IPythonExecutionFactory,
-    ExecutionResult
-} from '../../../platform/common/process/types.node';
+import { logger } from '../../../platform/logging';
+import { ExecutionResult } from '../../../platform/common/process/types.node';
 import { EXTENSION_ROOT_DIR } from '../../../platform/constants.node';
 import { PythonEnvironment } from '../../../platform/pythonEnvironments/info';
 import { JupyterCommands } from '../../../platform/common/constants';
 import { IJupyterCommand, IJupyterCommandFactory } from '../types.node';
+import { IPythonExecutionService, IPythonExecutionFactory } from '../../../platform/interpreter/types.node';
 
 /**
  * Launches jupyter using the current python environment.
@@ -32,7 +28,6 @@ class InterpreterJupyterCommand implements IJupyterCommand {
         this.interpreterPromise = Promise.resolve(this._interpreter);
         this.pythonLauncher = this.interpreterPromise.then(async (interpreter) => {
             return pythonExecutionFactory.createActivatedEnvironment({
-                allowEnvironmentFetchExceptions: true,
                 interpreter
             });
         });
@@ -127,7 +122,7 @@ export class InterpreterJupyterKernelSpecCommand extends InterpreterJupyterComma
 
         const defaultAction = () => {
             if (exception) {
-                traceError(`Exception attempting to enumerate kernelspecs: `, exception);
+                logger.error(`Exception attempting to enumerate kernelspecs: `, exception);
                 throw exception;
             }
             return output;
@@ -155,7 +150,7 @@ export class InterpreterJupyterKernelSpecCommand extends InterpreterJupyterComma
                 return output;
             }
         } catch (innerEx) {
-            traceError('Failed to get a list of the kernelspec using python script', innerEx);
+            logger.error('Failed to get a list of the kernelspec using python script', innerEx);
         }
         return defaultAction();
     }

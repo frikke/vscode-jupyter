@@ -3,32 +3,35 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-'use strict';
-
 import { assert } from 'chai';
 import * as sinon from 'sinon';
 import { KernelLauncher } from './kernelLauncher.node';
 import { IPlatformService } from '../../../platform/common/platform/types';
 import { IConfigurationService, IDisposable } from '../../../platform/common/types';
-import {
-    IProcessServiceFactory,
-    IPythonExecutionFactory,
-    IPythonExecutionService
-} from '../../../platform/common/process/types.node';
+import { IProcessServiceFactory } from '../../../platform/common/process/types.node';
 import { IPythonExtensionChecker } from '../../../platform/api/types';
 import { KernelEnvironmentVariablesService } from './kernelEnvVarsService.node';
 import { JupyterPaths } from '../finder/jupyterPaths.node';
 import { PythonKernelInterruptDaemon } from '../finder/pythonKernelInterruptDaemon.node';
-import { disposeAllDisposables } from '../../../platform/common/helpers';
+import { dispose } from '../../../platform/common/utils/lifecycle';
 import { anything, instance, mock, when } from 'ts-mockito';
 import { IFileSystemNode } from '../../../platform/common/platform/types.node';
 import { PythonKernelConnectionMetadata } from '../../types';
-import { CancellationTokenSource, Disposable, EventEmitter, PortAutoForwardAction, Uri } from 'vscode';
+import {
+    CancellationTokenSource,
+    Disposable,
+    EventEmitter,
+    PortAutoForwardAction,
+    Uri,
+    type PortAttributesProvider
+} from 'vscode';
 import { KernelProcess } from './kernelProcess.node';
-import { PortAttributesProviders } from '../port/portAttributeProvider.node';
+import { IPythonExecutionFactory, IPythonExecutionService } from '../../../platform/interpreter/types.node';
+import { UsedPorts } from '../../common/usedPorts';
+import { mockedVSCodeNamespaces, resetVSCodeMocks } from '../../../test/vscode-mock';
 
 suite('kernel Launcher', () => {
-    const disposables: IDisposable[] = [];
+    let disposables: IDisposable[] = [];
     let kernelLauncher: KernelLauncher;
     let processExecutionFactory: IProcessServiceFactory;
     let fs: IFileSystemNode;
@@ -71,13 +74,15 @@ suite('kernel Launcher', () => {
             instance(platform)
         );
     });
-    teardown(() => disposeAllDisposables(disposables));
+    teardown(() => {
+        disposables = dispose(disposables);
+        resetVSCodeMocks();
+    });
     async function launchKernel() {
         const kernelSpec = PythonKernelConnectionMetadata.create({
             id: '1',
             interpreter: {
                 id: '2',
-                sysPrefix: '',
                 uri: Uri.file('python')
             },
             kernelSpec: {
@@ -101,27 +106,32 @@ suite('kernel Launcher', () => {
         await kernelLauncher.launch(kernelSpec, 10_000, undefined, __dirname, cancellation.token);
     }
     test('Verify used ports are listed', async () => {
-        const oldPorts = KernelLauncher.usedPorts;
+        const oldPorts = Array.from(UsedPorts);
 
         await launchKernel();
 
-        assert.notDeepEqual(KernelLauncher.usedPorts, oldPorts, 'Ports not updated');
-        console.error(oldPorts);
-        console.error(KernelLauncher.usedPorts);
+        assert.notDeepEqual(Array.from(UsedPorts), oldPorts, 'Ports not updated');
     });
     test('Verify Kernel ports are not forwarded', async () => {
+        const oldPorts = new Set(UsedPorts);
+        const providers: PortAttributesProvider[] = [];
+        when(mockedVSCodeNamespaces.workspace.registerPortAttributesProvider(anything(), anything())).thenCall(
+            (_, provider) => providers.push(provider)
+        );
+
         await launchKernel();
-
-        const portAttributeProvider = new PortAttributesProviders(disposables);
         const cancellation = new CancellationTokenSource();
+        disposables.push(cancellation);
 
-        for (const port of KernelLauncher.usedPorts) {
-            assert.equal(
-                portAttributeProvider.providePortAttributes(port, undefined, undefined, cancellation.token)
-                    ?.autoForwardAction,
-                PortAutoForwardAction.Ignore,
-                'Kernel Port should not be forwarded'
+        for (const port of UsedPorts) {
+            if (oldPorts.has(port)) {
+                continue;
+            }
+            const results = await Promise.all(
+                providers.map((p) => Promise.resolve(p.providePortAttributes({ port }, cancellation.token)))
             );
+            const portForwardingIgnored = results.some((r) => r?.autoForwardAction === PortAutoForwardAction.Ignore);
+            assert.isTrue(portForwardingIgnored, `Kernel Port ${port} should not be forwarded`);
         }
     });
 });

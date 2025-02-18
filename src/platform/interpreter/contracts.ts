@@ -2,27 +2,30 @@
 // Licensed under the MIT License.
 
 import { Event, Uri, CancellationToken } from 'vscode';
-import { PythonEnvironmentV2 } from '../api/types';
 import { PythonEnvironment } from '../pythonEnvironments/info';
-
+import { Environment, ResolvedEnvironment } from '@vscode/python-extension';
+type InterpreterId = string;
 export const IInterpreterService = Symbol('IInterpreterService');
 export interface IInterpreterService {
+    // #region New API
+    resolveEnvironment(id: string | Environment): Promise<ResolvedEnvironment | undefined>;
+    // #endregion
+
+    // #region Old API
     readonly status: 'refreshing' | 'idle';
     readonly onDidChangeStatus: Event<void>;
-    /**
-     * Contains details of all the currently discovered Python Environments along with all of their resolved information.
-     */
-    readonly resolvedEnvironments: PythonEnvironment[];
-    readonly environments: readonly PythonEnvironmentV2[];
-    /**
-     * Pause detection of Python environments until the token is cancelled.
-     * After the token is cancelled, detection will resume and pending events will be triggered.
-     */
-    pauseInterpreterDetection(cancelToken: CancellationToken): void;
-    onDidChangeInterpreter: Event<void>;
-    onDidChangeInterpreters: Event<void>;
+    readonly onDidEnvironmentVariablesChange: Event<void>;
+    onDidChangeInterpreter: Event<PythonEnvironment | undefined>;
+    onDidChangeInterpreters: Event<PythonEnvironment[]>;
     onDidRemoveInterpreter: Event<{ id: string }>;
     refreshInterpreters(forceRefresh?: boolean): Promise<void>;
+    /**
+     * Hook up the Python API to the interpreter service.
+     * This is used to ensure that we listen to the Python API
+     * events and the like.
+     * Without this, we will never know about Python envs
+     */
+    initialize(): void;
     getActiveInterpreter(resource?: Uri): Promise<PythonEnvironment | undefined>;
     /**
      * Gets the details of a Python Environment
@@ -35,6 +38,9 @@ export interface IInterpreterService {
                   /** Environment Path */
                   path: string;
               }
+            | InterpreterId,
+        token?: CancellationToken
     ): Promise<undefined | PythonEnvironment>;
     getInterpreterHash(id: string): string | undefined;
+    // #endregion
 }

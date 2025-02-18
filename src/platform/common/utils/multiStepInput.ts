@@ -1,11 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-'use strict';
-
 /* eslint-disable , @typescript-eslint/no-explicit-any, @typescript-eslint/no-extraneous-class */
 
-import { inject, injectable } from 'inversify';
+import { injectable } from 'inversify';
 import {
     Disposable,
     Event,
@@ -14,19 +12,20 @@ import {
     QuickInputButtons,
     QuickPick,
     QuickPickItem,
-    QuickPickItemButtonEvent
+    QuickPickItemButtonEvent,
+    window
 } from 'vscode';
-import { IApplicationShell } from '../application/types';
-import { disposeAllDisposables } from '../helpers';
+import { dispose } from '../utils/lifecycle';
 import { createDeferred } from './async';
+import { noop } from './misc';
 
 // Borrowed from https://github.com/Microsoft/vscode-extension-samples/blob/master/quickinput-sample/src/multiStepInput.ts
 // Why re-invent the wheel :)
 
-export class InputFlowAction {
-    public static back = new InputFlowAction();
-    public static cancel = new InputFlowAction();
-    public static resume = new InputFlowAction();
+export class InputFlowAction extends Error {
+    public static back = new InputFlowAction('back');
+    public static cancel = new InputFlowAction('cancel');
+    public static resume = new InputFlowAction('resume');
 }
 
 export type InputStep<T extends any> = (input: MultiStepInput<T>, state: T) => Promise<InputStep<T> | void>;
@@ -70,6 +69,7 @@ export interface InputBoxParameters {
     prompt: string;
     buttons?: QuickInputButton[];
     validate(value: string): Promise<string | undefined>;
+    validationMessage?: string;
     shouldResume?(): Promise<boolean>;
 }
 
@@ -109,14 +109,14 @@ export interface IMultiStepInput<S> {
         prompt,
         validate,
         buttons,
-        shouldResume
+        shouldResume,
+        validationMessage
     }: P): Promise<MultiStepInputInputBoxResponseType<P>>;
 }
 
 export class MultiStepInput<S> implements IMultiStepInput<S> {
     private current?: QuickInput;
     private steps: InputStep<S>[] = [];
-    constructor(private readonly shell: IApplicationShell) {}
     public run(start: InputStep<S>, state: S) {
         return this.stepThrough(start, state);
     }
@@ -150,7 +150,7 @@ export class MultiStepInput<S> implements IMultiStepInput<S> {
     }: P): { quickPick: QuickPick<T>; selection: Promise<MultiStepInputQuickPicResponseType<T, P>> } {
         const disposables: Disposable[] = [];
         const deferred = createDeferred<MultiStepInputQuickPicResponseType<T, P>>();
-        const input = this.shell.createQuickPick<T>();
+        const input = window.createQuickPick<T>();
         input.title = title;
         input.step = step;
         input.totalSteps = totalSteps;
@@ -213,7 +213,7 @@ export class MultiStepInput<S> implements IMultiStepInput<S> {
                     if (message) {
                         resolvable = false;
                         // No validation allowed on a quick pick. Have to put up a dialog instead
-                        await this.shell.showErrorMessage(message, { modal: true });
+                        await window.showErrorMessage(message, { modal: true });
                     }
                     input.enabled = true;
                     input.busy = false;
@@ -241,7 +241,7 @@ export class MultiStepInput<S> implements IMultiStepInput<S> {
                             input.enabled = false;
                             input.busy = true;
                             // No validation allowed on a quick pick. Have to put up a dialog instead
-                            await this.shell.showErrorMessage(validationMessage);
+                            await window.showErrorMessage(validationMessage);
                             input.enabled = true;
                             input.busy = false;
                         }
@@ -254,7 +254,7 @@ export class MultiStepInput<S> implements IMultiStepInput<S> {
         }
         this.current = input;
         this.current.show();
-        deferred.promise.finally(() => disposeAllDisposables(disposables));
+        deferred.promise.finally(() => dispose(disposables)).catch(noop);
         return { quickPick: input, selection: deferred.promise };
     }
 
@@ -267,19 +267,22 @@ export class MultiStepInput<S> implements IMultiStepInput<S> {
         validate,
         password,
         buttons,
-        shouldResume
+        shouldResume,
+        validationMessage
     }: P): Promise<MultiStepInputInputBoxResponseType<P>> {
         const disposables: Disposable[] = [];
         try {
             return await new Promise<MultiStepInputInputBoxResponseType<P>>((resolve, reject) => {
-                const input = this.shell.createInputBox();
+                const input = window.createInputBox();
                 input.title = title;
                 input.step = step;
                 input.totalSteps = totalSteps;
                 input.password = password ? true : false;
                 input.value = value || '';
                 input.prompt = prompt;
+                input.validationMessage = validationMessage || '';
                 input.ignoreFocusOut = true;
+                input.validationMessage = validationMessage || '';
                 input.buttons = [...(this.steps.length > 1 ? [QuickInputButtons.Back] : []), ...(buttons || [])];
                 disposables.push(
                     input.onDidTriggerButton((item) => {
@@ -371,9 +374,8 @@ export interface IMultiStepInputFactory {
     create<S>(): IMultiStepInput<S>;
 }
 @injectable()
-export class MultiStepInputFactory {
-    constructor(@inject(IApplicationShell) private readonly shell: IApplicationShell) {}
+export class MultiStepInputFactory implements IMultiStepInputFactory {
     public create<S>(): IMultiStepInput<S> {
-        return new MultiStepInput<S>(this.shell);
+        return new MultiStepInput<S>();
     }
 }

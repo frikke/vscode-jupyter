@@ -1,12 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-'use strict';
-
 import { assert } from 'chai';
 import * as sinon from 'sinon';
 import * as vscode from 'vscode';
-import { traceInfo } from '../../platform/logging';
+import { logger } from '../../platform/logging';
 import { IDisposable } from '../../platform/common/types';
 import { InteractiveWindowProvider } from '../../interactive-window/interactiveWindowProvider';
 import { initialize, IExtensionTestApi, waitForCondition, startJupyterServer, captureScreenShot } from '../common';
@@ -26,7 +24,7 @@ import { Commands } from '../../platform/common/constants';
 import { IVariableViewProvider } from '../../webviews/extension-side/variablesView/types';
 import { pythonIWKernelDebugAdapter } from '../../notebooks/debugger/constants';
 import { isWeb, noop } from '../../platform/common/utils/misc';
-import { IControllerDefaultService } from '../../notebooks/controllers/types';
+import { ControllerDefaultService } from './notebook/controllerDefaultService';
 
 export type DebuggerType = 'VSCodePythonDebugger' | 'JupyterProtocolDebugger';
 
@@ -62,27 +60,28 @@ export function sharedIWDebuggerTests(
             });
             suiteTeardown(() => vscode.commands.executeCommand('workbench.debug.viewlet.action.removeAllBreakpoints'));
             setup(async function () {
-                traceInfo(`Start Test ${this.currentTest?.title}`);
+                logger.info(`Start Test ${this.currentTest?.title}`);
                 api = await initialize();
                 if (isWeb() || (IS_REMOTE_NATIVE_TEST() && debuggerType === 'VSCodePythonDebugger')) {
                     await startJupyterServer();
                 }
                 if (!isWeb() && !IS_REMOTE_NATIVE_TEST()) {
-                    await api.serviceContainer
-                        .get<IControllerDefaultService>(IControllerDefaultService)
-                        .computeDefaultController(undefined, 'interactive');
+                    await ControllerDefaultService.create(api.serviceContainer).computeDefaultController(
+                        undefined,
+                        'interactive'
+                    );
                 }
                 await vscode.commands.executeCommand('workbench.debug.viewlet.action.removeAllBreakpoints');
                 disposables.push(vscode.debug.registerDebugAdapterTrackerFactory('python', tracker));
                 disposables.push(vscode.debug.registerDebugAdapterTrackerFactory(pythonIWKernelDebugAdapter, tracker));
                 interactiveWindowProvider = api.serviceManager.get(IInteractiveWindowProvider);
-                traceInfo(`Start Test (completed) ${this.currentTest?.title}`);
+                logger.info(`Start Test (completed) ${this.currentTest?.title}`);
                 const coreVariableViewProvider = api.serviceContainer.get<IVariableViewProvider>(IVariableViewProvider);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 variableViewProvider = coreVariableViewProvider as any as ITestVariableViewProvider; // Cast to expose the test interfaces
             });
             teardown(async function () {
-                traceInfo(`Ended Test ${this.currentTest?.title}`);
+                logger.info(`Ended Test ${this.currentTest?.title}`);
                 if (this.currentTest?.isFailed()) {
                     await captureScreenShot(this);
                 }
@@ -91,6 +90,7 @@ export function sharedIWDebuggerTests(
                 await closeNotebooksAndCleanUpAfterTests(disposables);
             });
 
+            // TODO: This should be a testMandatory
             test.skip('Debug a cell from a python file @mandatory', async () => {
                 // #11917
                 // Run a cell to get IW open
