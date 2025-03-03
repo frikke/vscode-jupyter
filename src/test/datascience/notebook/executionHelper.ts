@@ -67,7 +67,10 @@ class TestNotebookCellExecution implements NotebookCellExecution {
     ): Promise<void> {
         const cellToEdit = cell || this.cell;
         const items = Array.isArray(out) ? out : [out];
-        (cellToEdit.outputs as NotebookCellOutput[]) = items;
+        if (cellToEdit.outputs.length) {
+            (cellToEdit.outputs as NotebookCellOutput[]).splice(0, cellToEdit.outputs.length);
+        }
+        (cellToEdit.outputs as NotebookCellOutput[]).push(...items);
     }
     async appendOutput(
         out: NotebookCellOutput | readonly NotebookCellOutput[],
@@ -101,7 +104,7 @@ export class TestNotebookDocument implements NotebookDocument {
     constructor(
         public readonly uri: Uri = Uri.file(`untitled${Date.now()}.ipynb`),
         public readonly notebookType: typeof JupyterNotebookView | typeof InteractiveWindowView = JupyterNotebookView,
-        public metadata = { custom: {} },
+        public metadata: {} = {},
         public isUntitled = true,
         public version: number = 0,
         public isDirty = false,

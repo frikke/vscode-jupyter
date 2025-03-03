@@ -5,14 +5,13 @@ import * as fakeTimers from '@sinonjs/fake-timers';
 import { KernelMessage } from '@jupyterlab/services';
 import { anything, instance, mock, verify, when } from 'ts-mockito';
 import { Disposable, EventEmitter, NotebookCell } from 'vscode';
-import { IApplicationShell } from '../platform/common/application/types';
-import { disposeAllDisposables } from '../platform/common/helpers';
+import { dispose } from '../platform/common/utils/lifecycle';
 import { IDisposable } from '../platform/common/types';
 import { createKernelController, TestNotebookDocument } from '../test/datascience/notebook/executionHelper';
 import { KernelCrashMonitor } from './kernelCrashMonitor';
 import {
     IKernel,
-    IKernelConnectionSession,
+    IKernelSession,
     IKernelController,
     IKernelProvider,
     INotebookKernelExecution,
@@ -23,12 +22,13 @@ import { assert } from 'chai';
 import { DataScience } from '../platform/common/utils/localize';
 import { createOutputWithErrorMessageForDisplay } from '../platform/errors/errorUtils';
 import { getDisplayNameOrNameOfKernelConnection } from './helpers';
+import { mockedVSCodeNamespaces } from '../test/vscode-mock';
+import { NotebookCellExecutionState, notebookCellExecutions } from '../platform/notebooks/cellExecutionStateService';
 
 suite('Kernel Crash Monitor', () => {
     let kernelProvider: IKernelProvider;
-    const disposables: IDisposable[] = [];
+    let disposables: IDisposable[] = [];
     let kernel: IKernel;
-    let appShell: IApplicationShell;
     let kernelCrashMonitor: KernelCrashMonitor;
     let onKernelStatusChanged: EventEmitter<{
         status: KernelMessage.Status;
@@ -36,12 +36,12 @@ suite('Kernel Crash Monitor', () => {
     }>;
     let onDidStartKernel: EventEmitter<IKernel>;
     let kernelExecution: INotebookKernelExecution;
-    let onPreExecute: EventEmitter<NotebookCell>;
     let cell: NotebookCell;
-    let kernelSession: IKernelConnectionSession;
+    let kernelSession: IKernelSession;
     let notebook: TestNotebookDocument;
     let controller: IKernelController;
     let clock: fakeTimers.InstalledClock;
+    const serverProviderHandle = { handle: 'handle', id: 'id', extensionId: '' };
     let remoteKernelSpec = RemoteKernelSpecConnectionMetadata.create({
         id: 'remote',
         baseUrl: '1',
@@ -51,7 +51,7 @@ suite('Kernel Crash Monitor', () => {
             executable: '',
             name: 'remote'
         },
-        serverId: '1'
+        serverProviderHandle
     });
     let localKernelSpec = LocalKernelSpecConnectionMetadata.create({
         id: 'local',
@@ -65,40 +65,38 @@ suite('Kernel Crash Monitor', () => {
     setup(async () => {
         kernelProvider = mock<IKernelProvider>();
         kernel = mock<IKernel>();
-        appShell = mock<IApplicationShell>();
         kernelExecution = mock<INotebookKernelExecution>();
-        kernelSession = mock<IKernelConnectionSession>();
+        kernelSession = mock<IKernelSession>();
         onKernelStatusChanged = new EventEmitter<{
             status: KernelMessage.Status;
             kernel: IKernel;
         }>();
         onDidStartKernel = new EventEmitter<IKernel>();
-        onPreExecute = new EventEmitter<NotebookCell>();
         notebook = new TestNotebookDocument();
         cell = await notebook.appendCodeCell('1234');
         controller = createKernelController('1');
         disposables.push(onDidStartKernel);
         disposables.push(onKernelStatusChanged);
-        disposables.push(onPreExecute);
         when(kernel.dispose()).thenResolve();
         when(kernel.disposed).thenReturn(false);
+        when(kernel.notebook).thenReturn(notebook);
         when(kernel.controller).thenReturn(controller);
         when(kernel.disposing).thenReturn(false);
         when(kernel.session).thenReturn(instance(kernelSession));
         when(kernelSession.kind).thenReturn('localRaw');
-        when(appShell.showErrorMessage(anything())).thenResolve();
+        when(mockedVSCodeNamespaces.window.showErrorMessage(anything())).thenResolve();
 
         when(kernelProvider.onDidStartKernel).thenReturn(onDidStartKernel.event);
         when(kernelProvider.onKernelStatusChanged).thenReturn(onKernelStatusChanged.event);
         when(kernelProvider.getOrCreate(anything(), anything())).thenReturn(instance(kernel));
         when(kernelProvider.getKernelExecution(anything())).thenReturn(instance(kernelExecution));
-        when(kernelExecution.onPreExecute).thenReturn(onPreExecute.event);
+        when(kernelProvider.get(anything())).thenReturn(instance(kernel));
 
-        kernelCrashMonitor = new KernelCrashMonitor(disposables, instance(appShell), instance(kernelProvider));
+        kernelCrashMonitor = new KernelCrashMonitor(disposables, instance(kernelProvider));
         clock = fakeTimers.install();
         disposables.push(new Disposable(() => clock.uninstall()));
     });
-    teardown(() => disposeAllDisposables(disposables));
+    teardown(() => (disposables = dispose(disposables)));
 
     test('Error message displayed and Cell output updated with error message (raw kernel)', async () => {
         when(kernelSession.kind).thenReturn('localRaw');
@@ -106,29 +104,29 @@ suite('Kernel Crash Monitor', () => {
         // Ensure we have a kernel and have started a cell.
         kernelCrashMonitor.activate();
         onDidStartKernel.fire(instance(kernel));
-        onPreExecute.fire(cell);
+        notebookCellExecutions.changeCellState(cell, NotebookCellExecutionState.Executing);
         const execution = controller.createNotebookCellExecution(cell);
         execution.start();
 
-        const expectedErrorMessage = Buffer.from(
-            createOutputWithErrorMessageForDisplay(DataScience.kernelCrashedDueToCodeInCurrentOrPreviousCell())
-                ?.items[0]!.data!
-        ).toString();
+        const expectedErrorMessage = new TextDecoder().decode(
+            createOutputWithErrorMessageForDisplay(DataScience.kernelCrashedDueToCodeInCurrentOrPreviousCell)?.items[0]!
+                .data!
+        );
 
         when(kernel.status).thenReturn('dead');
         onKernelStatusChanged.fire({ status: 'dead', kernel: instance(kernel) });
         await clock.runAllAsync();
 
         verify(
-            appShell.showErrorMessage(
-                DataScience.kernelDiedWithoutError().format(getDisplayNameOrNameOfKernelConnection(localKernelSpec))
+            mockedVSCodeNamespaces.window.showErrorMessage(
+                DataScience.kernelDiedWithoutError(getDisplayNameOrNameOfKernelConnection(localKernelSpec))
             )
         ).once();
 
         assert.strictEqual(cell.outputs.length, 1);
         assert.strictEqual(cell.outputs[0].items.length, 1);
         const outputItem = cell.outputs[0].items[0];
-        assert.include(Buffer.from(outputItem.data).toString(), expectedErrorMessage);
+        assert.include(new TextDecoder().decode(outputItem.data), expectedErrorMessage);
     });
     test('Error message displayed and Cell output updated with error message (jupyter kernel)', async () => {
         when(kernelSession.kind).thenReturn('localJupyter');
@@ -136,14 +134,14 @@ suite('Kernel Crash Monitor', () => {
         // Ensure we have a kernel and have started a cell.
         kernelCrashMonitor.activate();
         onDidStartKernel.fire(instance(kernel));
-        onPreExecute.fire(cell);
+        notebookCellExecutions.changeCellState(cell, NotebookCellExecutionState.Executing);
         const execution = controller.createNotebookCellExecution(cell);
         execution.start();
 
-        const expectedErrorMessage = Buffer.from(
-            createOutputWithErrorMessageForDisplay(DataScience.kernelCrashedDueToCodeInCurrentOrPreviousCell())
-                ?.items[0]!.data!
-        ).toString();
+        const expectedErrorMessage = new TextDecoder().decode(
+            createOutputWithErrorMessageForDisplay(DataScience.kernelCrashedDueToCodeInCurrentOrPreviousCell)?.items[0]!
+                .data!
+        );
 
         when(kernel.status).thenReturn('autorestarting');
         when(kernelSession.status).thenReturn('autorestarting');
@@ -151,8 +149,8 @@ suite('Kernel Crash Monitor', () => {
         await clock.runAllAsync();
 
         verify(
-            appShell.showErrorMessage(
-                DataScience.kernelDiedWithoutErrorAndAutoRestarting().format(
+            mockedVSCodeNamespaces.window.showErrorMessage(
+                DataScience.kernelDiedWithoutErrorAndAutoRestarting(
                     getDisplayNameOrNameOfKernelConnection(remoteKernelSpec)
                 )
             )
@@ -161,6 +159,6 @@ suite('Kernel Crash Monitor', () => {
         assert.strictEqual(cell.outputs.length, 1);
         assert.strictEqual(cell.outputs[0].items.length, 1);
         const outputItem = cell.outputs[0].items[0];
-        assert.include(Buffer.from(outputItem.data).toString(), expectedErrorMessage);
+        assert.include(new TextDecoder().decode(outputItem.data), expectedErrorMessage);
     });
 });

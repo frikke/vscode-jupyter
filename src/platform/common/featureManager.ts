@@ -2,37 +2,34 @@
 // Licensed under the MIT License.
 
 import { inject, injectable } from 'inversify';
-import { Disposable, WorkspaceConfiguration } from 'vscode';
-import { IApplicationShell, ICommandManager, IWorkspaceService } from './application/types';
-import { traceVerbose } from '../logging';
-import { launch } from './net/browser';
+import { Disposable, EventEmitter, WorkspaceConfiguration, commands, window, workspace } from 'vscode';
+import { logger } from '../logging';
+import { openInBrowser } from './net/browser';
 import { Deprecated } from './utils/localize';
 import {
     DeprecatedFeatureInfo,
     DeprecatedSettingAndValue,
-    IConfigurationService,
     IFeaturesManager,
     IFeatureSet,
     IPersistentStateFactory
 } from './types';
-import { Emitter } from 'vscode-jsonrpc';
 
 const deprecatedFeatures: DeprecatedFeatureInfo[] = [
     {
         doNotDisplayPromptStateKey: 'SHOW_DEPRECATED_FEATURE_PROMPT_FORMAT_ON_SAVE',
-        message: Deprecated.SHOW_DEPRECATED_FEATURE_PROMPT_FORMAT_ON_SAVE(),
+        message: Deprecated.SHOW_DEPRECATED_FEATURE_PROMPT_FORMAT_ON_SAVE,
         moreInfoUrl: 'https://github.com/Microsoft/vscode-python/issues/309',
         setting: { setting: 'formatting.formatOnSave', values: ['true', true] }
     },
     {
         doNotDisplayPromptStateKey: 'SHOW_DEPRECATED_FEATURE_PROMPT_LINT_ON_TEXT_CHANGE',
-        message: Deprecated.SHOW_DEPRECATED_FEATURE_PROMPT_LINT_ON_TEXT_CHANGE(),
+        message: Deprecated.SHOW_DEPRECATED_FEATURE_PROMPT_LINT_ON_TEXT_CHANGE,
         moreInfoUrl: 'https://github.com/Microsoft/vscode-python/issues/313',
         setting: { setting: 'linting.lintOnTextChange', values: ['true', true] }
     },
     {
         doNotDisplayPromptStateKey: 'SHOW_DEPRECATED_FEATURE_PROMPT_FOR_AUTO_COMPLETE_PRELOAD_MODULES',
-        message: Deprecated.SHOW_DEPRECATED_FEATURE_PROMPT_FOR_AUTO_COMPLETE_PRELOAD_MODULES(),
+        message: Deprecated.SHOW_DEPRECATED_FEATURE_PROMPT_FOR_AUTO_COMPLETE_PRELOAD_MODULES,
         moreInfoUrl: 'https://github.com/Microsoft/vscode-python/issues/1704',
         setting: { setting: 'autoComplete.preloadModules' }
     }
@@ -44,51 +41,31 @@ const deprecatedFeatures: DeprecatedFeatureInfo[] = [
  */
 @injectable()
 export class FeatureManager implements IFeaturesManager {
-    private _onDidChangeFeatures = new Emitter<void>();
+    private _onDidChangeFeatures = new EventEmitter<void>();
     readonly onDidChangeFeatures = this._onDidChangeFeatures.event;
-    private _features: IFeatureSet = { kernelPickerType: 'Stable' };
+    private _features: IFeatureSet = {};
     get features(): IFeatureSet {
         return this._features;
     }
 
     set features(newFeatures: IFeatureSet) {
-        if (newFeatures.kernelPickerType === this._features.kernelPickerType) {
-            return;
-        }
-
         this._features = newFeatures;
         this._onDidChangeFeatures.fire();
     }
 
     private disposables: Disposable[] = [];
-    constructor(
-        @inject(IPersistentStateFactory) private persistentStateFactory: IPersistentStateFactory,
-        @inject(ICommandManager) private cmdMgr: ICommandManager,
-        @inject(IConfigurationService) private configService: IConfigurationService,
-        @inject(IWorkspaceService) private workspace: IWorkspaceService,
-        @inject(IApplicationShell) private appShell: IApplicationShell
-    ) {
+    constructor(@inject(IPersistentStateFactory) private persistentStateFactory: IPersistentStateFactory) {
         this._updateFeatures();
 
         this.disposables.push(
-            this.configService.getSettings().onDidChange(() => {
-                this._updateFeatures();
-            })
-        );
-        this.disposables.push(
-            this.workspace.onDidChangeConfiguration(() => {
+            workspace.onDidChangeConfiguration(() => {
                 this._updateFeatures();
             })
         );
     }
 
     private _updateFeatures() {
-        const kernelPickerType =
-            this.workspace.getConfiguration('notebook.kernelPicker').get('type') === 'mru' ? 'Insiders' : 'Stable';
-
-        this.features = {
-            kernelPickerType
-        };
+        this.features = {};
     }
 
     public dispose() {
@@ -103,7 +80,7 @@ export class FeatureManager implements IFeaturesManager {
         if (Array.isArray(deprecatedInfo.commands)) {
             deprecatedInfo.commands.forEach((cmd) => {
                 this.disposables.push(
-                    this.cmdMgr.registerCommand(cmd, () => this.notifyDeprecation(deprecatedInfo), this)
+                    commands.registerCommand(cmd, () => this.notifyDeprecation(deprecatedInfo), this)
                 );
             });
         }
@@ -122,13 +99,13 @@ export class FeatureManager implements IFeaturesManager {
         }
         const moreInfo = 'Learn more';
         const doNotShowAgain = 'Never show again';
-        const option = await this.appShell.showInformationMessage(deprecatedInfo.message, moreInfo, doNotShowAgain);
+        const option = await window.showInformationMessage(deprecatedInfo.message, moreInfo, doNotShowAgain);
         if (!option) {
             return;
         }
         switch (option) {
             case moreInfo: {
-                launch(deprecatedInfo.moreInfoUrl);
+                openInBrowser(deprecatedInfo.moreInfoUrl);
                 break;
             }
             case doNotShowAgain: {
@@ -144,26 +121,26 @@ export class FeatureManager implements IFeaturesManager {
 
     public checkAndNotifyDeprecatedSetting(deprecatedInfo: DeprecatedFeatureInfo) {
         let notify = false;
-        if (Array.isArray(this.workspace.workspaceFolders) && this.workspace.workspaceFolders.length > 0) {
-            this.workspace.workspaceFolders.forEach((workspaceFolder) => {
+        if (Array.isArray(workspace.workspaceFolders) && workspace.workspaceFolders.length > 0) {
+            workspace.workspaceFolders.forEach((workspaceFolder) => {
                 if (notify) {
                     return;
                 }
                 notify = this.isDeprecatedSettingAndValueUsed(
-                    this.workspace.getConfiguration('jupyter', workspaceFolder.uri),
+                    workspace.getConfiguration('jupyter', workspaceFolder.uri),
                     deprecatedInfo.setting!
                 );
             });
         } else {
             notify = this.isDeprecatedSettingAndValueUsed(
-                this.workspace.getConfiguration('jupyter'),
+                workspace.getConfiguration('jupyter'),
                 deprecatedInfo.setting!
             );
         }
 
         if (notify) {
             this.notifyDeprecation(deprecatedInfo).catch((ex) =>
-                traceVerbose('Jupyter Extension: notifyDeprecation', ex)
+                logger.debug('Jupyter Extension: notifyDeprecation', ex)
             );
         }
     }

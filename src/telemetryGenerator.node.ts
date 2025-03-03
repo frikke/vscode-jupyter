@@ -1,11 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-// This line should always be right on top.
-/* eslint-disable @typescript-eslint/no-explicit-any */
-if ((Reflect as any).metadata === undefined) {
-    require('reflect-metadata');
-}
+// reflect-metadata is needed by inversify, this must come before any inversify references
+import './platform/ioc/reflectMetadata';
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import * as ts from 'typescript';
 import * as fs from 'fs-extra';
@@ -363,7 +361,7 @@ function getCommentForUnions(t: ts.TypeNode) {
             // Last time, remove trailing `*/`
             return line.trim().endsWith('*/') ? line.trim().replace('*/', '') : line;
         } else {
-            return line.trim().startsWith('*') ? line.trim().replace('*', '') : line;
+            return line.trim().startsWith('*') ? line.trim().replace('*', '') : line; // CodeQL [SM02383] Replace just the first occurrence of '*'.
         }
     });
 
@@ -586,8 +584,9 @@ function generateDocumentation(fileNames: string[]): void {
     const values = Array.from(entries.values()).sort((a, b) =>
         a.name.localeCompare(b.name, 'en', { sensitivity: 'base' })
     );
+
     // Uncomment if we need the CSV file for searching telemetry events.
-    if (false) {
+    if (1 + 1 === 0) {
         generateTelemetryCSV(values);
     }
     generateTelemetryGdpr(values);
@@ -711,10 +710,17 @@ function generateTelemetryGdpr(output: TelemetryEntry[]) {
     fs.appendFileSync(file, ` */\n`);
     fs.appendFileSync(file, '\n');
 
-    output.forEach((item) => {
+    output.forEach((item, index) => {
         // Do not include `__GDPR__` in the string with JSON comments, else telemetry tool treats this as a valid GDPR annotation.
         const gdpr = '__GDPR__';
-        const header = [`//${item.constantName}`, `/* ${gdpr}`, `   "${item.name}" : {`];
+        const header = [
+            `// (${index + 1}). ${item.constantName} (${item.name})`,
+            ...(item.description.trim().length
+                ? item.description.split(/\r?\n/).map((c) => (c.length ? `// ${c}` : '//'))
+                : []),
+            `/* ${gdpr}`,
+            `   "${item.name}" : {`
+        ];
         const footer = ['   }', ' */', '', ''];
         const properties: Record<string, IPropertyDataNonMeasurement> =
             'properties' in item.gdpr ? (item.gdpr['properties'] as Record<string, IPropertyDataNonMeasurement>) : {};
