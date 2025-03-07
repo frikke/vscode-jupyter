@@ -7,8 +7,6 @@ import { OSType } from '../utils/platform';
 //===========================
 // platform
 
-export const IsWindows = Symbol('IS_WINDOWS');
-
 export const IPlatformService = Symbol('IPlatformService');
 export interface IPlatformService {
     readonly osType: OSType;
@@ -27,10 +25,6 @@ export type TemporaryFileUri = { file: vscode.Uri } & vscode.Disposable;
 export type TemporaryFile = { filePath: string } & vscode.Disposable;
 export type TemporaryDirectory = { path: string } & vscode.Disposable;
 
-export interface ITempFileSystem {
-    createFile(suffix: string, mode?: number): Promise<TemporaryFile>;
-}
-
 // Where to fine executables.
 //
 // In particular this class provides all the tools needed to find
@@ -48,9 +42,8 @@ export interface IFileSystem {
     delete(uri: vscode.Uri): Promise<void>;
     readFile(uri: vscode.Uri): Promise<string>;
     stat(uri: vscode.Uri): Promise<vscode.FileStat>;
-    writeFile(uri: vscode.Uri, text: string | Buffer): Promise<void>;
+    writeFile(uri: vscode.Uri, text: string | Uint8Array): Promise<void>;
     getFiles(dir: vscode.Uri): Promise<vscode.Uri[]>;
-    createTemporaryFile(options: { fileExtension?: string; prefix?: string }): Promise<TemporaryFileUri>;
     exists(uri: vscode.Uri, fileType?: vscode.FileType): Promise<boolean>;
     getFileHash(filename: vscode.Uri): Promise<string>;
 }

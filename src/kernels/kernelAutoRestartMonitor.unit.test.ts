@@ -6,8 +6,8 @@ import { instance, mock, verify, when } from 'ts-mockito';
 import { assert } from 'chai';
 import { EventEmitter } from 'vscode';
 import { KernelAutoRestartMonitor } from './kernelAutoRestartMonitor.node';
-import { IKernel, IKernelConnectionSession, IKernelProvider, LocalKernelSpecConnectionMetadata } from './types';
-import { disposeAllDisposables } from '../platform/common/helpers';
+import { IKernel, IKernelSession, IKernelProvider, LocalKernelSpecConnectionMetadata } from './types';
+import { dispose } from '../platform/common/utils/lifecycle';
 import { IDisposable } from '../platform/common/types';
 import { KernelProgressReporter } from '../platform/progress/kernelProgressReporter';
 
@@ -18,7 +18,7 @@ suite('Jupyter Execution', async () => {
     let onDidStartKernel = new EventEmitter<IKernel>();
     let onDidReStartKernel = new EventEmitter<IKernel>();
     let onDidDisposeKernel = new EventEmitter<IKernel>();
-    const disposables: IDisposable[] = [];
+    let disposables: IDisposable[] = [];
     const connectionMetadata = LocalKernelSpecConnectionMetadata.create({
         id: '123',
         kernelSpec: {
@@ -37,7 +37,7 @@ suite('Jupyter Execution', async () => {
         restartMonitor = new KernelAutoRestartMonitor(disposables, instance(kernelProvider));
     });
     teardown(() => {
-        disposeAllDisposables(disposables);
+        disposables = dispose(disposables);
     });
     suiteTeardown(() => {
         onKernelStatusChanged.dispose();
@@ -58,7 +58,7 @@ suite('Jupyter Execution', async () => {
         restartMonitor.activate();
 
         const kernel = mock<IKernel>();
-        const session = mock<IKernelConnectionSession>();
+        const session = mock<IKernelSession>();
         const disposable = mock<IDisposable>();
         when(kernel.kernelConnectionMetadata).thenReturn(connectionMetadata);
         when(kernel.session).thenReturn(instance(session));

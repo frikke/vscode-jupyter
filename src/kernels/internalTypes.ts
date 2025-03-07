@@ -1,10 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-'use strict';
-
 import { Event } from 'vscode';
 import { KernelConnectionMetadata } from './types';
+import type { ObservableDisposable } from '../platform/common/utils/lifecycle';
 
 export enum ContributedKernelFinderKind {
     Remote = 'remote',
@@ -12,16 +11,21 @@ export enum ContributedKernelFinderKind {
     LocalPythonEnvironment = 'localPythonEnvironment'
 }
 
-export interface IContributedKernelFinder<T extends KernelConnectionMetadata = KernelConnectionMetadata> {
-    status: 'discovering' | 'idle';
+export interface IContributedKernelFinder<T extends KernelConnectionMetadata = KernelConnectionMetadata>
+    extends ObservableDisposable {
+    readonly status: 'discovering' | 'idle';
     onDidChangeStatus: Event<void>;
+    /**
+     * Last error thrown when listing the kernels.
+     * Use this property to determine if there was an error fetching kernels when there are no kernels listed.
+     */
+    readonly lastError?: Error;
     id: string;
     displayName: string;
     kind: ContributedKernelFinderKind;
     onDidChangeKernels: Event<{
-        added?: T[];
-        updated?: T[];
-        removed?: T[];
+        // Expose just the ID, used to minimize the places where we use the old type PythonEnvironment.
+        removed?: { id: string }[];
     }>;
     kernels: T[];
     refresh(): Promise<void>;

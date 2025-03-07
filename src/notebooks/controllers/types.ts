@@ -4,16 +4,17 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import * as vscode from 'vscode';
-import { INotebookMetadata } from '@jupyterlab/nbformat';
 import {
     KernelConnectionMetadata,
     LocalKernelConnectionMetadata,
+    PythonKernelConnectionMetadata,
     RemoteKernelConnectionMetadata
 } from '../../kernels/types';
 import { JupyterNotebookView, InteractiveWindowView } from '../../platform/common/constants';
-import { IDisposable, Resource } from '../../platform/common/types';
-import { PythonEnvironment } from '../../platform/pythonEnvironments/info';
-import { ContributedKernelFinderKind } from '../../kernels/internalTypes';
+import { IDisposable } from '../../platform/common/types';
+import { JupyterServerCollection } from '../../api';
+import { EnvironmentPath } from '@vscode/python-extension';
+import type { VSCodeNotebookController } from './vscodeNotebookController';
 
 export const InteractiveControllerIdSuffix = ' (Interactive)';
 
@@ -23,16 +24,15 @@ export interface IVSCodeNotebookController extends IDisposable {
     readonly id: string;
     readonly label: string;
     readonly viewType: typeof JupyterNotebookView | typeof InteractiveWindowView;
-    readonly onNotebookControllerSelected: vscode.Event<{
-        notebook: vscode.NotebookDocument;
-        controller: IVSCodeNotebookController;
-    }>;
     readonly onNotebookControllerSelectionChanged: vscode.Event<{
         selected: boolean;
         notebook: vscode.NotebookDocument;
+        controller: VSCodeNotebookController;
     }>;
+    readonly onConnecting: vscode.Event<void>;
     readonly onDidDispose: vscode.Event<void>;
     readonly onDidReceiveMessage: vscode.Event<{ editor: vscode.NotebookEditor; message: any }>;
+    restoreConnection(notebook: vscode.NotebookDocument): Promise<void>;
     postMessage(message: any, editor?: vscode.NotebookEditor): Thenable<boolean>;
     asWebviewUri(localResource: vscode.Uri): vscode.Uri;
     isAssociatedWithDocument(notebook: vscode.NotebookDocument): boolean;
@@ -49,6 +49,10 @@ export const IControllerRegistration = Symbol('IControllerRegistration');
 
 export interface IControllerRegistration {
     /**
+     * Promise resolved when controllers are done being loaded (refresh makes this promise update)
+     */
+    readonly loaded: Promise<void>;
+    /**
      * Gets the registered list of all of the controllers (the ones shown by VS code)
      */
     registered: IVSCodeNotebookController[];
@@ -56,21 +60,21 @@ export interface IControllerRegistration {
      * Gets every registered connection metadata
      */
     all: KernelConnectionMetadata[];
+    readonly onControllerSelected: vscode.Event<{
+        notebook: vscode.NotebookDocument;
+        controller: IVSCodeNotebookController;
+    }>;
+    readonly onControllerSelectionChanged: vscode.Event<{
+        notebook: vscode.NotebookDocument;
+        controller: IVSCodeNotebookController;
+        selected: boolean;
+    }>;
+    getSelected(document: vscode.NotebookDocument): IVSCodeNotebookController | undefined;
     /**
      * Keeps track of controllers created for the active interpreter.
      * These are very special controllers, as they are created out of band even before kernel discovery completes.
      */
     trackActiveInterpreterControllers(controllers: IVSCodeNotebookController[]): void;
-    canControllerBeDisposed(controller: IVSCodeNotebookController): boolean;
-    /**
-     * Batch registers new controllers. Disposing a controller unregisters it.
-     * @param a list of metadatas
-     * @param types Types of notebooks to create the controller for
-     */
-    batchAdd(
-        metadatas: KernelConnectionMetadata[],
-        types: (typeof JupyterNotebookView | typeof InteractiveWindowView)[]
-    ): void;
     /**
      * Registers a new controller or updates one. Disposing a controller unregisters it.
      * @return Returns the added and updated controller(s)
@@ -92,82 +96,6 @@ export interface IControllerRegistration {
      * Event fired when controllers are added or removed
      */
     onDidChange: vscode.Event<IVSCodeNotebookControllerUpdateEvent>;
-    isFiltered(metadata: KernelConnectionMetadata): boolean;
-}
-
-export const IControllerSelection = Symbol('IControllerSelection');
-
-export interface IControllerSelection {
-    readonly onControllerSelected: vscode.Event<{
-        notebook: vscode.NotebookDocument;
-        controller: IVSCodeNotebookController;
-    }>;
-    readonly onControllerSelectionChanged: vscode.Event<{
-        notebook: vscode.NotebookDocument;
-        controller: IVSCodeNotebookController;
-        selected: boolean;
-    }>;
-    getSelected(document: vscode.NotebookDocument): IVSCodeNotebookController | undefined;
-}
-export const IControllerPreferredService = Symbol('IControllerPreferredService');
-
-export interface IControllerPreferredService {
-    /**
-     * Given all of the registered controllers, finds the 'preferred' controller for a notebook
-     * @param document
-     * @param serverId
-     */
-    computePreferred(
-        document: vscode.NotebookDocument,
-        serverId?: string,
-        cancelToken?: vscode.CancellationToken
-    ): Promise<{ preferredConnection?: KernelConnectionMetadata; controller?: IVSCodeNotebookController }>;
-
-    /**
-     * Returns the preferred controller if already computed
-     * @param notebook
-     */
-    getPreferred(notebook: vscode.NotebookDocument): IVSCodeNotebookController | undefined;
-}
-
-export const IKernelRankingHelper = Symbol('IKernelRankingHelper');
-export interface IKernelRankingHelper {
-    rankKernels(
-        resource: Resource,
-        kernels: KernelConnectionMetadata[],
-        option?: INotebookMetadata,
-        preferredInterpreter?: PythonEnvironment,
-        cancelToken?: vscode.CancellationToken,
-        serverId?: string
-    ): Promise<KernelConnectionMetadata[] | undefined>;
-
-    // For the given kernel connection, return true if it's an exact match for the notebookMetadata
-    isExactMatch(
-        resource: Resource,
-        kernelConnection: KernelConnectionMetadata,
-        notebookMetadata: INotebookMetadata | undefined
-    ): Promise<boolean>;
-}
-
-export const IControllerDefaultService = Symbol('IControllerDefaultService');
-export interface IControllerDefaultService {
-    /**
-     * Creates the default controller for a notebook or interactive window
-     * @param resource
-     */
-    computeDefaultController(
-        resource: Resource,
-        viewType: typeof JupyterNotebookView | typeof InteractiveWindowView
-    ): Promise<IVSCodeNotebookController | undefined>;
-}
-
-export const IControllerLoader = Symbol('IControllerLoader');
-
-export interface IControllerLoader {
-    /**
-     * Promise resolved when controllers are done being loaded (refresh makes this promise update)
-     */
-    readonly loaded: Promise<void>;
 }
 
 // Flag enum for the reason why a kernel was logged as an exact match
@@ -179,15 +107,33 @@ export enum PreferredKernelExactMatchReason {
     IsNonPythonKernelLanguageMatch = 1 << 3
 }
 
-// Provides the UI to select a kernel source for a notebook document
-export const INotebookKernelSourceSelector = Symbol('INotebookKernelSourceSelector');
-export interface INotebookKernelSourceSelector {
-    selectLocalKernel(
-        notebook: vscode.NotebookDocument,
-        kind: ContributedKernelFinderKind.LocalKernelSpec | ContributedKernelFinderKind.LocalPythonEnvironment
-    ): Promise<LocalKernelConnectionMetadata | undefined>;
+export const IRemoteNotebookKernelSourceSelector = Symbol('IRemoteNotebookKernelSourceSelector');
+export interface IRemoteNotebookKernelSourceSelector {
     selectRemoteKernel(
         notebook: vscode.NotebookDocument,
-        providerId: string
+        provider: JupyterServerCollection
     ): Promise<RemoteKernelConnectionMetadata | undefined>;
+}
+export const ILocalNotebookKernelSourceSelector = Symbol('ILocalNotebookKernelSourceSelector');
+export interface ILocalNotebookKernelSourceSelector {
+    selectLocalKernel(notebook: vscode.NotebookDocument): Promise<LocalKernelConnectionMetadata | undefined>;
+}
+export const ILocalPythonNotebookKernelSourceSelector = Symbol('ILocalPythonNotebookKernelSourceSelector');
+export interface ILocalPythonNotebookKernelSourceSelector {
+    selectLocalKernel(notebook: vscode.NotebookDocument): Promise<PythonKernelConnectionMetadata | undefined>;
+    getKernelConnection(env: EnvironmentPath): Promise<PythonKernelConnectionMetadata | undefined>;
+}
+
+export interface IConnectionDisplayData extends IDisposable {
+    readonly onDidChange: vscode.Event<IConnectionDisplayData>;
+    readonly label: string;
+    readonly description: string | undefined;
+    readonly detail: string;
+    readonly category: string;
+    readonly serverDisplayName?: string;
+}
+
+export const IConnectionDisplayDataProvider = Symbol('IConnectionDisplayData');
+export interface IConnectionDisplayDataProvider {
+    getDisplayData(connection: KernelConnectionMetadata): IConnectionDisplayData;
 }

@@ -17,7 +17,7 @@ import {
 } from '../notebook/helper';
 import { initialize } from '../../initialize';
 import { JVSC_EXTENSION_ID, PYTHON_LANGUAGE } from '../../../platform/common/constants';
-import { traceInfo } from '../../../platform/logging';
+import { logger } from '../../../platform/logging';
 import { IKernel, IKernelProvider, isLocalConnection } from '../../../kernels/types';
 import { getTelemetrySafeHashedString } from '../../../platform/telemetry/helpers';
 import { IFileSystem } from '../../../platform/common/platform/types';
@@ -27,9 +27,10 @@ import {
     IIPyWidgetScriptManagerFactory
 } from '../../../notebooks/controllers/ipywidgets/types';
 import { isWeb } from '../../../platform/common/utils/misc';
-import { createActiveInterpreterController } from '../../../notebooks/controllers/helpers';
+import { createActiveInterpreterController } from '../notebook/helpers';
 import { IInterpreterService } from '../../../platform/interpreter/contracts';
 import { IControllerRegistration } from '../../../notebooks/controllers/types';
+import { HttpClient } from '../../../platform/common/net/httpClient';
 
 suite('IPyWidget Script Manager @widgets', function () {
     this.timeout(120_000);
@@ -44,13 +45,13 @@ suite('IPyWidget Script Manager @widgets', function () {
     let fs: IFileSystem;
     let context: IExtensionContext;
     suiteSetup(async function () {
-        traceInfo('Suite Setup');
+        logger.trace('Suite Setup');
         api = await initialize();
         await closeNotebooks();
         await startJupyterServer();
         sinon.restore();
         kernelProvider = api.serviceContainer.get<IKernelProvider>(IKernelProvider);
-        httpClient = api.serviceContainer.get<IHttpClient>(IHttpClient);
+        httpClient = new HttpClient();
         fs = api.serviceContainer.get<IFileSystem>(IFileSystem);
         context = api.serviceContainer.get<IExtensionContext>(IExtensionContext);
         widgetScriptManagerFactory =
@@ -96,23 +97,22 @@ suite('IPyWidget Script Manager @widgets', function () {
 
         kernel = kernelProvider.get(notebook)!;
         scriptManager = widgetScriptManagerFactory.getOrCreate(kernel);
-        traceInfo('Suite Setup (completed)');
+        logger.trace('Suite Setup (completed)');
     });
     setup(async function () {
-        traceInfo(`Starting Test ${this.currentTest?.title}`);
+        logger.trace(`Starting Test ${this.currentTest?.title}`);
     });
 
     teardown(async function () {
-        traceInfo(`Ended Test ${this.currentTest?.title}`);
+        logger.trace(`Ended Test ${this.currentTest?.title}`);
         if (this.currentTest?.isFailed()) {
             await captureScreenShot(this);
         }
-        traceInfo(`Ended Test (completed) ${this.currentTest?.title}`);
+        logger.trace(`Ended Test (completed) ${this.currentTest?.title}`);
     });
     suiteTeardown(() => closeNotebooksAndCleanUpAfterTests(disposables));
     test('Returns the right base Url', async function () {
         const baseUrl = await scriptManager.getBaseUrl!();
-        console.error(baseUrl);
         assert.isOk(baseUrl, 'BaseUrl should be defined');
 
         if (isLocalConnection(kernel.kernelConnectionMetadata)) {
@@ -121,7 +121,7 @@ suite('IPyWidget Script Manager @widgets', function () {
             } else {
                 const expectedDir = Uri.joinPath(
                     context.extensionUri,
-                    'tmp',
+                    'temp',
                     'scripts',
                     await getTelemetrySafeHashedString(kernel.kernelConnectionMetadata.id),
                     'jupyter'
@@ -141,7 +141,7 @@ suite('IPyWidget Script Manager @widgets', function () {
         }
         const expectedDir = Uri.joinPath(
             context.extensionUri,
-            'tmp',
+            'temp',
             'scripts',
             await getTelemetrySafeHashedString(kernel.kernelConnectionMetadata.id),
             'jupyter'
@@ -179,6 +179,11 @@ suite('IPyWidget Script Manager @widgets', function () {
         );
         await Promise.all(
             Object.keys(moduleMappings!).map(async (moduleName) => {
+                if (moduleName === 'jupyter-widgets-controls' || moduleName === 'js-logger') {
+                    // Found that latest version of k3d has a reference to this, event though such a script is not defined
+                    // js-logger is not distributed as a widget, hence we don't have a script for it (also its not crucial)
+                    return;
+                }
                 // Verify the Url is valid.
                 const uri = moduleMappings![moduleName];
                 assert.isOk(uri, `Script Uri not defined for widget ${moduleName}`);
@@ -187,18 +192,18 @@ suite('IPyWidget Script Manager @widgets', function () {
                 }
                 assert.isTrue(
                     uri.toString().startsWith(baseUrl!.toString()),
-                    `Script uri ${uri.toString()} does not start with base url ${baseUrl!.toString()}`
+                    `Script uri ${uri.toString()} does not start with base url ${baseUrl!.toString()}, for module ${moduleName}`
                 );
                 if (isLocalConnection(kernel.kernelConnectionMetadata)) {
                     // Since we're on the local machine, such a file should exist on disc.
                     const file = `${uri.fsPath}.js`;
                     const fileExists = await fs.exists(Uri.file(file));
-                    assert.isTrue(fileExists, `File '${file}' does not exist on disc`);
+                    assert.isTrue(fileExists, `File '${file}' does not exist on disc, for module ${moduleName}`);
                 } else {
                     // Verify this is a valid Uri.
                     const file = `${uri.toString()}.js`;
                     const result = await httpClient.downloadFile(file);
-                    assert.isTrue(result.ok, `Uri '${file}' does not seem to be valid`);
+                    assert.isTrue(result.ok, `Uri '${file}' does not seem to be valid, for module ${moduleName}`);
                 }
             })
         );

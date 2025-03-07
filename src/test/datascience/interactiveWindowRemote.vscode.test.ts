@@ -1,12 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-'use strict';
-
 import { assert } from 'chai';
 import { workspace, Disposable } from 'vscode';
 import { IInteractiveWindowProvider } from '../../interactive-window/types';
-import { traceInfo } from '../../platform/logging';
+import { logger } from '../../platform/logging';
+import { testMandatory } from '../common';
 import { initialize, IS_REMOTE_NATIVE_TEST } from '../initialize.node';
 import { submitFromPythonFile } from './helpers.node';
 import {
@@ -23,16 +22,16 @@ suite('Interactive window (remote) @iw', async () => {
         if (!IS_REMOTE_NATIVE_TEST()) {
             return this.skip();
         }
-        traceInfo(`Start Test ${this.currentTest?.title}`);
+        logger.info(`Start Test ${this.currentTest?.title}`);
         const api = await initialize();
         interactiveWindowProvider = api.serviceContainer.get<IInteractiveWindowProvider>(IInteractiveWindowProvider);
         await startJupyterServer();
-        traceInfo(`Start Test (completed) ${this.currentTest?.title}`);
+        logger.info(`Start Test (completed) ${this.currentTest?.title}`);
     });
     teardown(async function () {
-        traceInfo(`Ended Test ${this.currentTest?.title}`);
+        logger.info(`Ended Test ${this.currentTest?.title}`);
         await closeNotebooksAndCleanUpAfterTests();
-        traceInfo(`Ended Test (completed) ${this.currentTest?.title}`);
+        logger.info(`Ended Test (completed) ${this.currentTest?.title}`);
     });
     suiteTeardown(() => closeNotebooksAndCleanUpAfterTests(disposables));
 
@@ -50,7 +49,7 @@ suite('Interactive window (remote) @iw', async () => {
         return { notebookDocument };
     }
 
-    test('Execute cell from Python file @mandatory', async () => {
+    testMandatory('Execute cell from Python file', async () => {
         const source = 'print("Hello World")';
         const { notebookDocument } = await runCellInRemoveInteractiveWindow(source);
 

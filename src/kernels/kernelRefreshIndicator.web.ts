@@ -1,16 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-'use strict';
-
 import { inject, injectable } from 'inversify';
 import { notebooks } from 'vscode';
 import { IExtensionSyncActivationService } from '../platform/activation/types';
 import { InteractiveWindowView, JupyterNotebookView } from '../platform/common/constants';
-import { disposeAllDisposables } from '../platform/common/helpers';
+import { dispose } from '../platform/common/utils/lifecycle';
 import { IDisposable, IDisposableRegistry } from '../platform/common/types';
+import { logger } from '../platform/logging';
 import { IKernelFinder } from './types';
-
 /**
  * Ensures we refresh the list of Python environments upon opening a Notebook.
  */
@@ -25,7 +23,7 @@ export class KernelRefreshIndicator implements IExtensionSyncActivationService {
         disposables.push(this);
     }
     public dispose() {
-        disposeAllDisposables(this.disposables);
+        dispose(this.disposables);
     }
     public activate() {
         this.startRefresh();
@@ -55,6 +53,8 @@ export class KernelRefreshIndicator implements IExtensionSyncActivationService {
         );
     }
     private displayProgressIndicator() {
+        const id = Date.now().toString();
+        logger.debug(`Start refreshing Kernel Picker (${id})`);
         const taskNb = notebooks.createNotebookControllerDetectionTask(JupyterNotebookView);
         const taskIW = notebooks.createNotebookControllerDetectionTask(InteractiveWindowView);
         this.disposables.push(taskNb);
@@ -63,6 +63,7 @@ export class KernelRefreshIndicator implements IExtensionSyncActivationService {
         this.kernelFinder.onDidChangeStatus(
             () => {
                 if (this.kernelFinder.status === 'idle') {
+                    logger.debug(`End refreshing Kernel Picker (${id})`);
                     taskNb.dispose();
                     taskIW.dispose();
                 }

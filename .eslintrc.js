@@ -4,16 +4,8 @@ module.exports = {
         es6: true,
         node: true
     },
-    extends: ['prettier', 'prettier/@typescript-eslint'],
-    ignorePatterns: [
-        '*.js',
-        'vscode.*.d.ts',
-        'vscode.d.ts',
-        '**/*.test.ts',
-        'types',
-        // TODO: Does this file need to be linted?
-        'src/test/pythonFiles/formatting/dummy.ts'
-    ],
+    extends: ['prettier'],
+    ignorePatterns: ['*.js', 'vscode.*.d.ts', 'vscode.d.ts', 'types'],
     parser: '@typescript-eslint/parser',
     parserOptions: {
         project: [
@@ -69,7 +61,7 @@ module.exports = {
         '@typescript-eslint/no-floating-promises': [
             'error',
             {
-                ignoreVoid: false
+                ignoreVoid: true
             }
         ],
 
@@ -130,7 +122,21 @@ module.exports = {
         ],
         'react/jsx-uses-vars': 'error',
         'react/jsx-uses-react': 'error',
-        'no-restricted-imports': ['error', { paths: ['lodash', 'rxjs', 'lodash/noop', 'rxjs/util/noop'] }],
+        'no-restricted-imports': 'off',
+        // 'no-restricted-imports': [
+        '@typescript-eslint/no-restricted-imports': [
+            'error',
+            {
+                paths: ['lodash', 'lodash/noop'],
+                patterns: [
+                    {
+                        group: ['@jupyterlab/*'],
+                        message: 'Convert to `import type` or dynamic import',
+                        allowTypeImports: true
+                    }
+                ]
+            }
+        ],
         'import/no-restricted-paths': [
             'error',
             {
@@ -228,7 +234,24 @@ module.exports = {
         {
             files: ['**/*.test.ts'],
             rules: {
-                '@typescript-eslint/no-explicit-any': 'off'
+                '@typescript-eslint/no-explicit-any': 'off',
+                '@typescript-eslint/no-restricted-imports': 'off'
+            }
+        },
+        {
+            files: ['src/test/**/*.ts'],
+            rules: {
+                '@typescript-eslint/no-explicit-any': 'off',
+                '@typescript-eslint/no-restricted-imports': 'off'
+            }
+        },
+        {
+            files: ['src/*.d.ts'],
+            rules: {
+                // Keep the *.d.ts files clean of any linting suppressions.
+                // These files will be distributed as is as part of the npm package.
+                '@typescript-eslint/no-explicit-any': 'off',
+                '@typescript-eslint/no-unused-vars': 'off'
             }
         }
     ],

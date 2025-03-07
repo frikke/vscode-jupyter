@@ -1,15 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-'use strict';
+// Custom mocha reporter
+import './common/exitCIAfterTestReporter';
 
-/* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires, @typescript-eslint/no-explicit-any */
-// Always place at the top, to ensure other modules are imported first.
-require('./common/exitCIAfterTestReporter');
+// reflect-metadata is needed by inversify, this must come before any inversify references
+import '../platform/ioc/reflectMetadata';
 
-if ((Reflect as any).metadata === undefined) {
-    require('reflect-metadata');
-}
 // Always place at top, must be done before we import any of the files from src/client folder.
 // We need to ensure nyc gets a change to setup necessary hooks before files are loaded.
 const { setupCoverage } = require('./coverage.node');
@@ -23,7 +20,6 @@ import * as v8 from 'v8';
 import { IS_CI_SERVER, IS_CI_SERVER_TEST_DEBUGGER } from './ciConstants.node';
 import {
     IS_MULTI_ROOT_TEST,
-    IS_SMOKE_TEST,
     IS_PERF_TEST,
     MAX_EXTENSION_ACTIVATION_TIME,
     TEST_RETRYCOUNT,
@@ -45,7 +41,7 @@ type SetupOptions = Mocha.MochaOptions & {
     exit: boolean;
 };
 
-process.on('unhandledRejection', (ex: any, _a) => {
+process.on('unhandledRejection', (ex: Error, _a) => {
     if (typeof ex === 'object' && ex && ex.name === 'Canceled' && ex instanceof Error) {
         // We don't care about unhandled `Cancellation` errors.
         // When we shutdown tests some of these cancellations (cancelling starting of Kernels, etc) bubble upto VS Code.
@@ -63,6 +59,11 @@ process.on('unhandledRejection', (ex: any, _a) => {
     const msg = `Unhandled Promise Rejection with the message ${message.join(', ')}`;
 
     if (
+        (msg.includes('Canceled future for') && msg.includes('message before replies were done')) ||
+        (msg.includes('The kernel died. Error') &&
+            msg.includes('No module named ipykernel_launcher') &&
+            msg.includes('View Jupyter [log](command:jupyter.viewOutput)')) ||
+        msg.includes('Channel has been closed') ||
         msg.includes('Error: custom request failed') ||
         msg.includes('ms-python.python') || // We don't care about unhanded promise rejections from the Python extension.
         msg.includes('ms-python.isort') || // We don't care about unhanded promise rejections from the Python related extensions.
@@ -151,7 +152,7 @@ function activateExtensionScript() {
     const initializationPromise = initialize();
     const promise = Promise.race([initializationPromise, failed]);
     // eslint-disable-next-line no-console
-    promise.finally(() => clearTimeout(timer!)).catch((e) => console.error(e));
+    promise.finally(() => clearTimeout(timer! as any)).catch((e) => console.error(e));
     return initializationPromise;
 }
 
@@ -170,13 +171,6 @@ export async function run(): Promise<void> {
     const testsRoot = path.join(__dirname, '..');
     // Enable source map support.
     require('source-map-support').install();
-
-    // nteract/transforms-full expects to run in the browser so we have to fake
-    // parts of the browser here.
-    if (!IS_SMOKE_TEST()) {
-        const reactHelpers = require('./datascience/reactHelpers') as typeof import('./datascience/reactHelpers');
-        reactHelpers.setUpDomEnvironment();
-    }
 
     const ignoreGlob: string[] = [];
     switch (options.testFilesSuffix.toLowerCase()) {
@@ -201,7 +195,7 @@ export async function run(): Promise<void> {
             : options.testFilesSuffix;
         glob(
             `**/*${pattern}.js`,
-            { ignore: ['**/**.unit.test.js', '**/**.functional.test.js'].concat(ignoreGlob), cwd: testsRoot },
+            { ignore: ['**/**.unit.test.js'].concat(ignoreGlob), cwd: testsRoot },
             (error, files) => {
                 if (error) {
                     return reject(error);
@@ -213,14 +207,11 @@ export async function run(): Promise<void> {
 
     // Setup test files that need to be run.
     testFiles.forEach((file) => mocha.addFile(path.join(testsRoot, file)));
-    console.log(`Running tests with options ${JSON.stringify(options, undefined, 4)}`);
-    console.log(`Tests included ${testFiles.join(',')}`);
 
     // for performance tests, extension activation is part of the test run
     if (!IS_PERF_TEST()) {
         /* eslint-disable no-console */
         console.time('Time taken to activate the extension');
-        console.log('Starting & waiting for Jupyter Extension to activate');
         await activateExtensionScript();
         console.timeEnd('Time taken to activate the extension');
     }

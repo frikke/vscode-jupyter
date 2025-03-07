@@ -2,12 +2,9 @@
 // Licensed under the MIT License.
 
 import { exec, execSync, spawn } from 'child_process';
-import { EventEmitter } from 'events';
-import { Observable } from 'rxjs/Observable';
-import { CancellationError, Disposable } from 'vscode';
-import { ignoreLogging, traceDecoratorVerbose, traceInfoIfCI } from '../../logging';
+import { CancellationError, Disposable, EventEmitter } from 'vscode';
+import { ignoreLogging, debugDecorator, logger } from '../../logging';
 import { TraceOptions } from '../../logging/types';
-
 import { IDisposable } from '../types';
 import { createDeferred } from '../utils/async';
 import { EnvironmentVariables } from '../variables/types';
@@ -22,6 +19,9 @@ import {
     SpawnOptions,
     StdErrError
 } from './types.node';
+import { logProcess } from './logger.node';
+import { noop } from '../utils/misc';
+import { dispose } from '../utils/lifecycle';
 
 export class BufferDecoder implements IBufferDecoder {
     public decode(buffers: Buffer[]): string {
@@ -36,11 +36,10 @@ export class BufferDecoder implements IBufferDecoder {
  * Can make observables or promises for launching.
  * Environment variables to launch with can be passed into the constructor.
  */
-export class ProcessService extends EventEmitter implements IProcessService {
+export class ProcessService implements IProcessService {
     private processesToKill = new Set<IDisposable>();
     private readonly decoder: IBufferDecoder;
     constructor(private readonly env?: EnvironmentVariables) {
-        super();
         this.decoder = new BufferDecoder();
     }
     public static isAlive(pid?: number): boolean {
@@ -70,7 +69,6 @@ export class ProcessService extends EventEmitter implements IProcessService {
         }
     }
     public dispose() {
-        this.removeAllListeners();
         this.processesToKill.forEach((p) => {
             try {
                 p.dispose();
@@ -84,7 +82,8 @@ export class ProcessService extends EventEmitter implements IProcessService {
         const spawnOptions = this.getDefaultOptions(options);
         const proc = spawn(file, args, spawnOptions);
         let procExited = false;
-        traceInfoIfCI(`Exec observable ${file}, ${args.join(' ')}`);
+        logger.ci(`Exec observable ${file}, ${args.join(' ')}`);
+        const disposables: IDisposable[] = [];
         const disposable: IDisposable = {
             // eslint-disable-next-line
             dispose: function () {
@@ -94,59 +93,59 @@ export class ProcessService extends EventEmitter implements IProcessService {
                 if (proc) {
                     proc.unref();
                 }
+                dispose(disposables);
             }
         };
         this.processesToKill.add(disposable);
 
-        const output = new Observable<Output<string>>((subscriber) => {
-            const disposables: IDisposable[] = [];
+        const output = createObservable<Output<string>>();
+        disposables.push(output);
 
-            const on = (ee: NodeJS.EventEmitter, name: string, fn: Function) => {
-                ee.on(name, fn as any);
-                disposables.push({ dispose: () => ee.removeListener(name, fn as any) as any });
-            };
+        const on = (ee: NodeJS.EventEmitter, name: string, fn: Function) => {
+            ee.on(name, fn as any);
+            disposables.push({ dispose: () => ee.removeListener(name, fn as any) as any });
+        };
 
-            if (options.token) {
-                disposables.push(
-                    options.token.onCancellationRequested(() => {
-                        if (!procExited && !proc.killed) {
-                            ProcessService.kill(proc.pid);
-                            procExited = true;
-                        }
-                    })
-                );
+        if (options.token) {
+            disposables.push(
+                options.token.onCancellationRequested(() => {
+                    if (!procExited && !proc.killed) {
+                        ProcessService.kill(proc.pid);
+                        procExited = true;
+                    }
+                })
+            );
+        }
+
+        const sendOutput = (source: 'stdout' | 'stderr', data: Buffer) => {
+            const out = this.decoder.decode([data]);
+            if (source === 'stderr' && options.throwOnStdErr) {
+                output.reject(new StdErrError(out));
+            } else {
+                output.fire({ source, out: out });
             }
+        };
 
-            const sendOutput = (source: 'stdout' | 'stderr', data: Buffer) => {
-                const out = this.decoder.decode([data]);
-                if (source === 'stderr' && options.throwOnStdErr) {
-                    subscriber.error(new StdErrError(out));
-                } else {
-                    subscriber.next({ source, out: out });
-                }
-            };
+        on(proc.stdout!, 'data', (data: Buffer) => sendOutput('stdout', data));
+        on(proc.stderr!, 'data', (data: Buffer) => sendOutput('stderr', data));
 
-            on(proc.stdout!, 'data', (data: Buffer) => sendOutput('stdout', data));
-            on(proc.stderr!, 'data', (data: Buffer) => sendOutput('stderr', data));
-
-            proc.once('close', () => {
-                procExited = true;
-                subscriber.complete();
-                disposables.forEach((d) => d.dispose());
-            });
-            proc.once('exit', () => {
-                procExited = true;
-                subscriber.complete();
-                disposables.forEach((d) => d.dispose());
-            });
-            proc.once('error', (ex) => {
-                procExited = true;
-                subscriber.error(ex);
-                disposables.forEach((d) => d.dispose());
-            });
+        proc.once('close', () => {
+            procExited = true;
+            output.resolve();
+            disposables.forEach((d) => d.dispose());
+        });
+        proc.once('exit', () => {
+            procExited = true;
+            output.resolve();
+            disposables.forEach((d) => d.dispose());
+        });
+        proc.once('error', (ex) => {
+            procExited = true;
+            output.reject(ex);
+            disposables.forEach((d) => d.dispose());
         });
 
-        this.emit('exec', file, args, options);
+        logProcess(file, args, options);
 
         return {
             proc,
@@ -208,12 +207,12 @@ export class ProcessService extends EventEmitter implements IProcessService {
             disposables.forEach((d) => d.dispose());
         });
 
-        this.emit('exec', file, args, options);
+        logProcess(file, args, options);
 
         return deferred.promise;
     }
 
-    @traceDecoratorVerbose('Execing shell command', TraceOptions.BeforeCall | TraceOptions.Arguments)
+    @debugDecorator('Execing shell command', TraceOptions.BeforeCall | TraceOptions.Arguments)
     public shellExec(command: string, @ignoreLogging() options: ShellOptions = {}): Promise<ExecutionResult<string>> {
         const shellOptions = this.getDefaultOptions(options);
         return new Promise((resolve, reject) => {
@@ -274,6 +273,32 @@ export class ProcessService extends EventEmitter implements IProcessService {
             defaultOptions.env.PYTHONIOENCODING = 'utf-8';
         }
 
+        // Always ensure we have unbuffered output.
+        if (!defaultOptions.env.PYTHON_FROZEN_MODULES) {
+            defaultOptions.env.PYTHON_FROZEN_MODULES = 'on';
+        }
+
         return defaultOptions;
     }
+}
+
+export function createObservable<T>() {
+    const onDidChange = new EventEmitter<T>();
+    const promise = createDeferred<void>();
+    // No dangling promises.
+    promise.promise.catch(noop);
+    return {
+        get onDidChange() {
+            return onDidChange.event;
+        },
+        get done() {
+            return promise.promise;
+        },
+        resolve: promise.resolve.bind(promise),
+        reject: promise.reject.bind(promise),
+        fire: onDidChange.fire.bind(onDidChange),
+        dispose: () => {
+            onDidChange.dispose();
+        }
+    };
 }

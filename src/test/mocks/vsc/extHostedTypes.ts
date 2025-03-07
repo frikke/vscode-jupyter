@@ -1,8 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-'use strict';
-
 // import * as crypto from 'crypto';
 
 /* eslint-disable  */
@@ -15,45 +13,6 @@ import { vscUri } from './uri';
 import { generateUuid } from './uuid';
 
 export namespace vscMockExtHostedTypes {
-    export class NotebookCellMetadata {
-        constructor(
-            public readonly editable?: boolean,
-            public readonly breakpointMargin?: boolean,
-            public readonly runnable?: boolean,
-            public readonly executionOrder?: number,
-            public readonly runState?: NotebookCellRunState,
-            public readonly runStartTime?: number,
-            public readonly statusMessage?: string,
-            public readonly lastRunDuration?: number,
-            public readonly custom?: Record<string, any>
-        ) {}
-
-        // todo@API write a proper signature
-        with(change: {
-            editable?: boolean | null;
-            breakpointMargin?: boolean | null;
-            runnable?: boolean | null;
-            executionOrder?: number | null;
-            runState?: NotebookCellRunState | null;
-            runStartTime?: number | null;
-            statusMessage?: string | null;
-            lastRunDuration?: number | null;
-            custom?: Record<string, any> | null;
-        }): NotebookCellMetadata {
-            return new NotebookCellMetadata(
-                change.editable || this.editable,
-                change.breakpointMargin || this.breakpointMargin,
-                change.runnable || this.runnable,
-                change.executionOrder || this.executionOrder,
-                change.runState || this.runState,
-                change.runStartTime || this.runStartTime,
-                change.statusMessage || this.statusMessage,
-                change.lastRunDuration || this.lastRunDuration,
-                change.custom || this.custom
-            );
-        }
-    }
-
     export class NotebookCellOutputItem {
         static isNotebookCellOutputItem(obj: unknown): obj is vscode.NotebookCellOutputItem {
             if (obj instanceof NotebookCellOutputItem) {
@@ -101,7 +60,10 @@ export namespace vscMockExtHostedTypes {
             return NotebookCellOutputItem.text(rawStr, mime);
         }
 
-        constructor(public data: Uint8Array, public mime: string) {
+        constructor(
+            public data: Uint8Array,
+            public mime: string
+        ) {
             this.mime = mime;
         }
     }
@@ -169,10 +131,6 @@ export namespace vscMockExtHostedTypes {
          * A controller is preferred for a notebook.
          */
         Preferred = 2
-    }
-    export enum NotebookRunState {
-        Running = 1,
-        Idle = 2
     }
 
     export interface IRelativePattern {
@@ -952,7 +910,7 @@ export namespace vscMockExtHostedTypes {
                 this._tabstop = nested._tabstop;
                 defaultValue = nested.value;
             } else if (typeof defaultValue === 'string') {
-                defaultValue = defaultValue.replace(/\$|}/g, '\\$&');
+                defaultValue = defaultValue.replace(/\$|}/g, '\\$&'); // CodeQL [SM02383] This code is not used in production, only used for mocks in testing.
             }
 
             this.value += '${';
@@ -2109,7 +2067,7 @@ export namespace vscMockExtHostedTypes {
     export class TreeItem {
         label?: string;
         resourceUri?: vscUri.URI;
-        iconPath?: string | vscUri.URI | { light: string | vscUri.URI; dark: string | vscUri.URI };
+        iconPath?: IconPath;
         command?: vscode.Command;
         contextValue?: string;
         tooltip?: string;
@@ -2145,6 +2103,24 @@ export namespace vscMockExtHostedTypes {
             this.id = id;
         }
     }
+
+    /**
+     * Represents an icon in the UI. This is either an uri, separate uris for the light- and dark-themes,
+     * or a {@link ThemeIcon theme icon}.
+     */
+    export type IconPath =
+        | vscode.Uri
+        | {
+              /**
+               * The icon path for the light theme.
+               */
+              light: vscode.Uri;
+              /**
+               * The icon path for the dark theme.
+               */
+              dark: vscode.Uri;
+          }
+        | ThemeIcon;
 
     export class ThemeColor {
         id: string;
@@ -2372,7 +2348,10 @@ export namespace vscMockExtHostedTypes {
     }
     export class NotebookRendererScript {
         public readonly provides: string[];
-        constructor(public uri: vscode.Uri, provides: string | string[] = []) {
+        constructor(
+            public uri: vscode.Uri,
+            provides: string | string[] = []
+        ) {
             this.provides = typeof provides === 'string' ? [provides] : provides;
         }
     }
@@ -2391,32 +2370,39 @@ export namespace vscMockExtHostedTypes {
     // https://github.com/microsoft/vscode/issues/115616 @alexr00
 
     export enum PortAutoForwardAction {
+        /**
+         * Notify the user that the port is being forwarded. This is the default action.
+         */
         Notify = 1,
+        /**
+         * Once the port is forwarded, open the user's web browser to the forwarded port.
+         */
         OpenBrowser = 2,
+        /**
+         * Once the port is forwarded, open the preview browser to the forwarded port.
+         */
         OpenPreview = 3,
+        /**
+         * Forward the port silently.
+         */
         Silent = 4,
-        Ignore = 5,
-        OpenBrowserOnce = 6
+        /**
+         * Do not forward the port.
+         */
+        Ignore = 5
     }
 
     export class PortAttributes {
         /**
-         * The port number associated with this this set of attributes.
-         */
-        port: number;
-
-        /**
          * The action to be taken when this port is detected for auto forwarding.
          */
         autoForwardAction: PortAutoForwardAction;
-
         /**
          * Creates a new PortAttributes object
          * @param port the port number
          * @param autoForwardAction the action to take when this port is detected
          */
-        constructor(port: number, autoForwardAction: PortAutoForwardAction) {
-            this.port = port;
+        constructor(autoForwardAction: PortAutoForwardAction) {
             this.autoForwardAction = autoForwardAction;
         }
     }
@@ -2440,7 +2426,10 @@ export namespace vscMockExtHostedTypes {
          * @param start start index
          * @param end end index.
          */
-        constructor(public readonly start: number, public readonly end: number) {}
+        constructor(
+            public readonly start: number,
+            public readonly end: number
+        ) {}
 
         /**
          * Derive a new range for this range.
@@ -2512,7 +2501,10 @@ export namespace vscMockExtHostedTypes {
          */
         newNotebookMetadata?: { [key: string]: any };
 
-        constructor(public readonly range: NotebookRange, public readonly newCells: vscode.NotebookCellData[]) {}
+        constructor(
+            public readonly range: NotebookRange,
+            public readonly newCells: vscode.NotebookCellData[]
+        ) {}
     }
 
     /**
@@ -2528,5 +2520,32 @@ export namespace vscMockExtHostedTypes {
          * The default {@link QuickPickItem.kind} is an item that can be selected in the quick pick.
          */
         Default = 0
+    }
+    export class NotebookCellData {
+        kind: NotebookCellKind;
+        value: string;
+        languageId: string;
+        mime?: string;
+        outputs?: vscode.NotebookCellOutput[];
+        metadata?: Record<string, any>;
+        executionSummary?: vscode.NotebookCellExecutionSummary;
+
+        constructor(
+            kind: NotebookCellKind,
+            value: string,
+            languageId: string,
+            mime?: string,
+            outputs?: vscode.NotebookCellOutput[],
+            metadata?: Record<string, any>,
+            executionSummary?: vscode.NotebookCellExecutionSummary
+        ) {
+            this.kind = kind;
+            this.value = value;
+            this.languageId = languageId;
+            this.mime = mime;
+            this.outputs = outputs ?? [];
+            this.metadata = metadata;
+            this.executionSummary = executionSummary;
+        }
     }
 }
